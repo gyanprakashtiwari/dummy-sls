@@ -18,6 +18,16 @@ provider:
             - "dynamodb:BatchWriteItem"
           Resource:
             - { "Fn::GetAtt": ["CountryTable", "Arn"] }
+        - Effect: Allow 
+          Action:
+            - "dynamodb:PutItem"
+            - "dynamodb:GetItem"
+            - "dynamodb:DeleteItem"
+            - "dynamodb:Scan"
+            - "dynamodb:BatchWriteItem"
+            - "dynamodb:Query"
+          Resource:
+            - { "Fn::GetAtt": ["NeighborsTable", "Arn"] }
 
 functions:
   api:
@@ -41,6 +51,27 @@ functions:
           path: /countries/{id}
           method: get
 
+  getAllCountriesPaginated:
+    handler: src/handler.getAllCountriesPaginated
+    events:
+      - httpApi:
+          path: /countries
+          method: get
+
+  getCountryNeighbors:
+    handler: src/handler.getCountryNeighbors
+    events:
+      - httpApi:
+          path: /countries/{countryID}/neighbour
+          method: get
+
+  addNeighbors:
+    handler: src/handler.addNeighbors
+    events:
+      - httpApi:
+          path: /countries/{countryID}/neighbour
+          method: post
+
 plugins:
   - serverless-plugin-typescript
 
@@ -59,3 +90,21 @@ resources:
         KeySchema:
           - AttributeName: countryID
             KeyType: HASH
+
+    NeighborsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: NeighborsTable
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        AttributeDefinitions:
+          - AttributeName: countryID
+            AttributeType: S
+          - AttributeName: neighborId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: countryID
+            KeyType: HASH
+          - AttributeName: neighborId
+            KeyType: RANGE

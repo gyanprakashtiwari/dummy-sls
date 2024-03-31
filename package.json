@@ -7,6 +7,8 @@
   },
   "dependencies": {
     "aws-lambda": "^1.0.7",
+    "aws-sdk": "^2.1589.0",
+    "uuid": "^9.0.1",
     "yup": "^1.4.0"
   }
 }

@@ -5,6 +5,8 @@ import * as yup from "yup";
 
 const docClient = new AWS.DynamoDB.DocumentClient();
 const CountryTableName = "CountryTable";
+const NeighborCountryTableName = "NeighborsTable";
+
 const headers = {
   "content-type": "application/json",
 };
@@ -154,74 +156,319 @@ const handleError = (e: unknown) => {
   throw e;
 };
 
-/*
-export const updateProduct = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
+export const getAllCountriesPaginated = async (
+  event: APIGatewayProxyEvent
+): Promise<APIGatewayProxyResult> => {
   try {
-    const id = event.pathParameters?.id as string;
+    let {
+      page = "1",
+      limit = "10",
+      sort_by = "a_to_z",
+      search,
+    } = event.queryStringParameters || {};
+    let skip = (parseInt(page) - 1) * parseInt(limit);
+    let sortKey: string;
+    let sortDirection: number = 1;
 
-    await fetchProductById(id);
+    // Determine sorting criteria
+    switch (sort_by) {
+      case "a_to_z":
+        sortKey = "name";
+        sortDirection = 1;
+        break;
+      case "z_to_a":
+        sortKey = "name";
+        sortDirection = -1;
+        break;
+      case "population_high_to_low":
+        sortKey = "population";
+        sortDirection = -1;
+        break;
+      case "population_low_to_high":
+        sortKey = "population";
+        sortDirection = 1;
+        break;
+      case "area_high_to_low":
+        sortKey = "area";
+        sortDirection = -1;
+        break;
+      case "area_low_to_high":
+        sortKey = "area";
+        sortDirection = 1;
+        break;
+      default:
+        sortKey = "name";
+        sortDirection = 1;
+        break;
+    }
 
-    const reqBody = JSON.parse(event.body as string);
-
-    await schema.validate(reqBody, { abortEarly: false });
-
-    const product = {
-      ...reqBody,
-      productID: id,
+    // Set up query parameters
+    let params: AWS.DynamoDB.DocumentClient.ScanInput = {
+      TableName: CountryTableName,
     };
 
-    await docClient
-      .put({
-        TableName: tableName,
-        Item: product,
-      })
-      .promise();
+    // Add search filter if provided
+    if (search) {
+      const searchRegex = new RegExp(search, "i");
+      params.FilterExpression =
+        "contains(#name, :search) OR contains(#region, :search) OR contains(#subregion, :search)";
+      params.ExpressionAttributeNames = {
+        "#name": "name",
+        "#region": "region",
+        "#subregion": "subregion",
+      };
+      params.ExpressionAttributeValues = {
+        ":search": searchRegex.source, // Use source to extract regex pattern string
+      };
+    }
+
+    // Perform the query
+    const output: any = await docClient.scan(params).promise();
+
+    // Sort the results
+    if (sortKey) {
+      output.Items.sort((a: any, b: any) => {
+        const aValue = a[sortKey];
+        const bValue = b[sortKey];
+        return aValue < bValue
+          ? -1 * sortDirection
+          : aValue > bValue
+          ? 1 * sortDirection
+          : 0;
+      });
+    }
+
+    // Paginate the results
+    const totalCountries = output.Items.length;
+    const totalPages = Math.ceil(totalCountries / parseInt(limit));
+    const countries = output.Items.slice(skip, skip + parseInt(limit));
+
+    // Prepare response
+    const hasNext = parseInt(page) < totalPages;
+    const hasPrev = parseInt(page) > 1;
 
     return {
       statusCode: 200,
-      headers,
-      body: JSON.stringify(product),
-    };
-  } catch (e) {
-    return handleError(e);
-  }
-};
-
-export const deleteProduct = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-  try {
-    const id = event.pathParameters?.id as string;
-
-    await fetchProductById(id);
-
-    await docClient
-      .delete({
-        TableName: tableName,
-        Key: {
-          productID: id,
+      body: JSON.stringify({
+        message: "Country list",
+        data: {
+          list: countries,
+          has_next: hasNext,
+          has_prev: hasPrev,
+          page: parseInt(page),
+          pages: totalPages,
+          per_page: parseInt(limit),
+          total: totalCountries,
         },
-      })
-      .promise();
-
-    return {
-      statusCode: 204,
-      body: "",
+      }),
     };
-  } catch (e) {
-    return handleError(e);
+  } catch (error) {
+    console.error("Error fetching countries:", error);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ message: "Internal Server Error", data: {} }),
+    };
   }
 };
 
-export const listProduct = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-  const output = await docClient
-    .scan({
-      TableName: tableName,
+export const getCountryNeighbors = async (
+  event: APIGatewayProxyEvent
+): Promise<APIGatewayProxyResult> => {
+  try {
+    const { countryID } = event.pathParameters || {};
+
+    // Retrieve the country from the CountriesTable
+    const country = await fetchCountryById(countryID as string);
+
+    if (!country) {
+      return {
+        statusCode: 404,
+        headers,
+        body: JSON.stringify({ message: "Country not found", data: {} }),
+      };
+    }
+
+    // Retrieve neighbors from the NeighborsTable
+    const neighbors = await fetchNeighborsByCountryId(countryID as string);
+
+    if (neighbors.length === 0) {
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify({
+          message: "Country neighbours",
+          data: { countries: [] },
+        }),
+      };
+    } else {
+      const neighborCountries = await Promise.all(
+        neighbors.map(async (neighborId: any) => {
+          const neighbor = await fetchCountryById(neighborId);
+          return {
+            id: neighbor.countryID,
+            name: neighbor.name,
+            currency: neighbor.currency,
+            capital: neighbor.capital,
+            region: neighbor.region,
+          };
+        })
+      );
+
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify({
+          message: "Neighbour countries list",
+          data: { countries: neighborCountries },
+        }),
+      };
+    }
+  } catch (error: any) {
+    console.error(error);
+    return {
+      statusCode: error.statusCode,
+      headers,
+      body: JSON.stringify({
+        message: "Some Error",
+        error: error.message,
+      }),
+    };
+  }
+};
+
+const fetchNeighborsByCountryId = async (
+  countryID: string
+): Promise<string[]> => {
+  const result = await docClient
+    .query({
+      TableName: NeighborCountryTableName,
+      KeyConditionExpression: "countryID = :countryID",
+      ExpressionAttributeValues: {
+        ":countryID": countryID,
+      },
     })
     .promise();
 
-  return {
-    statusCode: 200,
-    headers,
-    body: JSON.stringify(output.Items),
-  };
+  return result.Items ? result.Items.map((item) => item.neighborId) : [];
 };
-*/
+
+export const addNeighbors = async (
+  event: APIGatewayProxyEvent
+): Promise<APIGatewayProxyResult> => {
+  try {
+    const { countryID } = event.pathParameters || {};
+
+    const requestBody = JSON.parse(event.body as string);
+    const neighborData: { neighborId: string }[] = requestBody.neighbors;
+
+    const country = await fetchCountryById(countryID as string);
+    if (!country) {
+      return {
+        statusCode: 404,
+        headers,
+        body: JSON.stringify({ message: "Country not found", data: {} }),
+      };
+    }
+
+    const existingCountryIds = await fetchAllCountryIds();
+
+    const errors: string[] = [];
+    const successfulAdditions: string[] = [];
+
+    for (const neighborObj of neighborData) {
+      const neighborId = neighborObj.neighborId;
+
+      if (!existingCountryIds.includes(neighborId)) {
+        errors.push(`Invalid neighbor country ID: ${neighborId}`);
+        continue;
+      }
+
+      const existingNeighbor = await fetchNeighbor(
+        countryID as string,
+        neighborId
+      );
+      if (existingNeighbor) {
+        errors.push(
+          `Neighbor with ID ${neighborId} already exists for this country`
+        );
+        continue;
+      }
+
+      await addNeighbor(countryID as string, neighborId);
+      successfulAdditions.push(neighborId);
+    }
+
+    if (successfulAdditions.length === 0) {
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({
+          message: "Failed to add neighbors",
+          data: { neighbors: [], errors },
+        }),
+      };
+    } else {
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify({
+          message: "Neighbors added successfully",
+          data: { neighbors: successfulAdditions },
+          errors,
+        }),
+      };
+    }
+  } catch (error: any) {
+    return {
+      statusCode: error.statusCode,
+      headers,
+      body: JSON.stringify({
+        message: "Internal Server Error",
+        error: error.message,
+      }),
+    };
+  }
+};
+
+const fetchAllCountryIds = async (): Promise<string[]> => {
+  const result = await docClient
+    .scan({
+      TableName: CountryTableName,
+      ProjectionExpression: "countryID",
+    })
+    .promise();
+
+  return result.Items ? result.Items.map((item) => item.countryID) : [];
+};
+
+const fetchNeighbor = async (
+  countryID: string,
+  neighborId: string
+): Promise<any> => {
+  const output = await docClient
+    .get({
+      TableName: NeighborCountryTableName,
+      Key: {
+        countryID: countryID,
+        neighborId: neighborId,
+      },
+    })
+    .promise();
+
+  return output.Item;
+};
+
+const addNeighbor = async (
+  countryID: string,
+  neighborId: string
+): Promise<void> => {
+  await docClient
+    .put({
+      TableName: NeighborCountryTableName,
+      Item: {
+        countryID: countryID,
+        neighborId: neighborId,
+      },
+    })
+    .promise();
+};
