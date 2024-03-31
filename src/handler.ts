@@ -13,34 +13,73 @@ const countrySchema = yup.object().shape({
   name: yup.string().required(),
   capital: yup.string().required(),
   region: yup.string().required(),
-  currency: yup.string().required()
+  currency: yup.string().required(),
 });
 
-export const addCountry = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
+export const addCountry = async (
+  event: APIGatewayProxyEvent
+): Promise<APIGatewayProxyResult> => {
   try {
-    const reqBody = JSON.parse(event.body as string);
+    if (!event.body) {
+      throw new Error("Request body is missing");
+    }
+    const requestBody = JSON.parse(event.body as string);
 
-    await countrySchema.validate(reqBody, { abortEarly: false });
+    if (!Array.isArray(requestBody)) {
+      throw new Error("Request body should be an array of countries.");
+    }
 
-    const country = {
-      ...reqBody,
+    const isValid = await Promise.all(
+      requestBody.map(async (country: any) => {
+        try {
+          await countrySchema.validate(country);
+          return true;
+        } catch (validationError: any) {
+          throw new Error(
+            `Validation error for country: ${validationError.message}`
+          );
+        }
+      })
+    );
+
+    if (!isValid.every((valid) => valid)) {
+      throw new Error("One or more countries failed validation.");
+    }
+
+    const countries = requestBody.map((country: any) => ({
+      ...country,
       countryID: v4(),
+    }));
+
+    const putRequests = countries.map((country: any) => ({
+      PutRequest: {
+        Item: country,
+      },
+    }));
+
+    const batchWriteParams = {
+      RequestItems: {
+        [CountryTableName]: putRequests,
+      },
     };
 
-    await docClient
-      .put({
-        TableName: CountryTableName,
-        Item: country,
-      })
-      .promise();
+    await docClient.batchWrite(batchWriteParams).promise();
 
     return {
       statusCode: 201,
       headers,
-      body: JSON.stringify(country),
+      body: JSON.stringify(countries),
     };
-  } catch (e) {
-    return handleError(e);
+  } catch (error: any) {
+    console.error("Error in addCountry function:", error);
+    return {
+      statusCode: 500,
+      headers,
+      body: JSON.stringify({
+        message: "Internal Server Error",
+        error: error.message,
+      }),
+    };
   }
 };
 
@@ -50,7 +89,9 @@ class HttpError extends Error {
   }
 }
 
-export const getCountryByID = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
+export const getCountryByID = async (
+  event: APIGatewayProxyEvent
+): Promise<APIGatewayProxyResult> => {
   try {
     const country = await fetchCountryById(event.pathParameters?.id as string);
 
@@ -67,7 +108,7 @@ export const getCountryByID = async (event: APIGatewayProxyEvent): Promise<APIGa
 const fetchCountryById = async (id: string) => {
   const output = await docClient
     .get({
-      TableName: tableName,
+      TableName: CountryTableName,
       Key: {
         countryID: id,
       },
@@ -81,7 +122,6 @@ const fetchCountryById = async (id: string) => {
   return output.Item;
 };
 
-/*
 const handleError = (e: unknown) => {
   if (e instanceof yup.ValidationError) {
     return {
@@ -97,7 +137,9 @@ const handleError = (e: unknown) => {
     return {
       statusCode: 400,
       headers,
-      body: JSON.stringify({ error: `invalid request body format : "${e.message}"` }),
+      body: JSON.stringify({
+        error: `invalid request body format : "${e.message}"`,
+      }),
     };
   }
 
@@ -112,8 +154,7 @@ const handleError = (e: unknown) => {
   throw e;
 };
 
-
-
+/*
 export const updateProduct = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
   try {
     const id = event.pathParameters?.id as string;
