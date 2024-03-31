@@ -1,11 +1,22 @@
 org: gyan1
 app: dummy-sls
 service: dummy-sls
-frameworkVersion: '3'
+frameworkVersion: "3"
 
 provider:
   name: aws
   runtime: nodejs18.x
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - "dynamodb:PutItem"
+            - "dynamodb:GetItem"
+            - "dynamodb:DeleteItem"
+            - "dynamodb:Scan"
+          Resource:
+            - { "Fn::GetAtt": ["CountryTable", "Arn"] }
 
 functions:
   api:
@@ -14,3 +25,33 @@ functions:
       - httpApi:
           path: /
           method: get
+
+  addCountry:
+    handler: src/handler.addCountry
+    events:
+      - httpApi:
+          path: /countries
+          method: post
+          
+  getCountryByID:
+    handler: src/handler.getCountryByID
+    events:
+      - httpApi:
+          path: /countries/{id}
+          method: get
+
+resources:
+  Resources:
+    CountryTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: CountryTable
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        AttributeDefinitions:
+          - AttributeName: countryID
+            AttributeType: S
+        KeySchema:
+          - AttributeName: countryID
+            KeyType: HASH
