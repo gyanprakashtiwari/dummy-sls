@@ -1,11 +1,33 @@
 org: gyan1
 app: dummy-sls
 service: dummy-sls
-frameworkVersion: '3'
+frameworkVersion: "3"
 
 provider:
   name: aws
   runtime: nodejs18.x
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - "dynamodb:PutItem"
+            - "dynamodb:GetItem"
+            - "dynamodb:DeleteItem"
+            - "dynamodb:Scan"
+            - "dynamodb:BatchWriteItem"
+          Resource:
+            - { "Fn::GetAtt": ["CountryTable", "Arn"] }
+        - Effect: Allow 
+          Action:
+            - "dynamodb:PutItem"
+            - "dynamodb:GetItem"
+            - "dynamodb:DeleteItem"
+            - "dynamodb:Scan"
+            - "dynamodb:BatchWriteItem"
+            - "dynamodb:Query"
+          Resource:
+            - { "Fn::GetAtt": ["NeighborsTable", "Arn"] }
 
 functions:
   api:
@@ -14,3 +36,75 @@ functions:
       - httpApi:
           path: /
           method: get
+
+  addCountry:
+    handler: src/handler.addCountry
+    events:
+      - httpApi:
+          path: /countries
+          method: post
+
+  getCountryByID:
+    handler: src/handler.getCountryByID
+    events:
+      - httpApi:
+          path: /countries/{id}
+          method: get
+
+  getAllCountriesPaginated:
+    handler: src/handler.getAllCountriesPaginated
+    events:
+      - httpApi:
+          path: /countries
+          method: get
+
+  getCountryNeighbors:
+    handler: src/handler.getCountryNeighbors
+    events:
+      - httpApi:
+          path: /countries/{countryID}/neighbour
+          method: get
+
+  addNeighbors:
+    handler: src/handler.addNeighbors
+    events:
+      - httpApi:
+          path: /countries/{countryID}/neighbour
+          method: post
+
+plugins:
+  - serverless-plugin-typescript
+
+resources:
+  Resources:
+    CountryTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: CountryTable
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        AttributeDefinitions:
+          - AttributeName: countryID
+            AttributeType: S
+        KeySchema:
+          - AttributeName: countryID
+            KeyType: HASH
+
+    NeighborsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: NeighborsTable
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        AttributeDefinitions:
+          - AttributeName: countryID
+            AttributeType: S
+          - AttributeName: neighborId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: countryID
+            KeyType: HASH
+          - AttributeName: neighborId
+            KeyType: RANGE
